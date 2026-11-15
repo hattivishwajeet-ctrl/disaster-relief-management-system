@@ -198,6 +198,11 @@ route('POST', '/requests', admin, async ({ request, user }) => {
     return exists(db,'SELECT * FROM request_details WHERE id=?',[result.insertId],'Request not found');
   });
 });
+route('GET', '/priority', admin, ({ search }) => {
+  const disaster = numberFilter(search, 'disasterId');
+  return rows(sql, 'SELECT * FROM live_priority WHERE (? IS NULL OR disaster_id=?) ORDER BY queue_position LIMIT 250',
+    [disaster,disaster]);
+});
 route('GET', '/allocations', admin, () => rows(sql, `SELECT a.*,q.quantity,q.resource,q.unit,q.camp,q.status,l.name AS source
   FROM allocations a JOIN request_details q ON q.id=a.request_id JOIN locations l ON l.id=a.source_id
   ORDER BY a.id DESC LIMIT 250`));
@@ -229,6 +234,24 @@ route('PATCH', '/requests/(\\d+)/delivery', admin, async ({ request, params }) =
     return { id:requestId,status };
   });
 });
+
+route('GET', '/volunteers', admin, () => rows(sql,`SELECT v.user_id,u.email,COALESCE(a.available,0) AS available,a.updated_at
+  FROM volunteers v JOIN users u ON u.id=v.user_id LEFT JOIN availability a ON a.user_id=v.user_id ORDER BY u.email`));
+route('GET', '/availability/me', ['volunteer'], async ({ user }) => {
+  const [result] = await rows(sql, 'SELECT * FROM availability WHERE user_id=?', [user.id]);
+  return result || { available: false };
+});
+route('PUT', '/availability/me', ['volunteer'], async ({ request, user }) => {
+  const { available } = await body(request, z.object({ available:z.boolean() }));
+  return transaction(async db => {
+    await rows(db, `INSERT INTO availability(user_id,available) VALUES (?,?) AS incoming
+      ON DUPLICATE KEY UPDATE available=incoming.available`, [user.id,available]);
+    await event(db,'volunteer_availability',{ userId:user.id, available });
+    return { available };
+  });
+});
+route('GET', '/notifications', admin, () => rows(sql,
+  'SELECT id,event_type AS type,payload,created_at AS createdAt FROM notifications ORDER BY id DESC LIMIT 80'));
 
 const reportSchema = z.object({
   collection: z.enum(reportCollections),

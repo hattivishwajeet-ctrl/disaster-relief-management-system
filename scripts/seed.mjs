@@ -1,7 +1,7 @@
 import { hashPassword } from '../server/security.mjs';
 import { event, rows, sql, transaction } from '../server/db.mjs';
 
-const roles = ['admin'];
+const roles = ['admin','volunteer'];
 const accounts = roles.map(role => {
   const password = process.env[role.toUpperCase() + '_PASSWORD'];
   if (!password || password.length < 12) throw new Error('Set ' + role.toUpperCase() + '_PASSWORD to at least 12 characters');
@@ -16,6 +16,8 @@ try {
       [users[role]] = await rows(db,'SELECT id FROM users WHERE email=? AND role=?',[email,role]);
       if (!users[role]) throw new Error('Existing account has an incompatible role: ' + email);
     }
+    await rows(db,'INSERT IGNORE INTO volunteers(user_id) VALUES (?)',[users.volunteer.id]);
+    await rows(db,'INSERT IGNORE INTO availability(user_id,available) VALUES (?,1)',[users.volunteer.id]);
     const disaster = await rows(db,"INSERT IGNORE INTO disasters(name,severity) VALUES ('Riverbend Flood',5)");
     if (!disaster.affectedRows) return null;
     const area = await rows(db,"INSERT INTO affected_areas(disaster_id,name) VALUES (?,'East Bank')",[disaster.insertId]);
