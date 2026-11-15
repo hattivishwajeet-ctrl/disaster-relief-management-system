@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { event, rows, sql, transaction } from './db.mjs';
+import { documents, event, reportCollections, rows, sql, transaction } from './db.mjs';
 import { fieldSummaries } from './reports.mjs';
 import { distribution, shortages, unattended } from './analytics.mjs';
 import { createSession, passwordMatches, session, sessionCookie } from './security.mjs';
@@ -198,6 +198,11 @@ route('POST', '/requests', admin, async ({ request, user }) => {
     return exists(db,'SELECT * FROM request_details WHERE id=?',[result.insertId],'Request not found');
   });
 });
+route('GET', '/priority', admin, ({ search }) => {
+  const disaster = numberFilter(search, 'disasterId');
+  return rows(sql, 'SELECT * FROM live_priority WHERE (? IS NULL OR disaster_id=?) ORDER BY queue_position LIMIT 250',
+    [disaster,disaster]);
+});
 route('GET', '/allocations', admin, () => rows(sql, `SELECT a.*,q.quantity,q.resource,q.unit,q.camp,q.status,l.name AS source
   FROM allocations a JOIN request_details q ON q.id=a.request_id JOIN locations l ON l.id=a.source_id
   ORDER BY a.id DESC LIMIT 250`));
@@ -228,6 +233,60 @@ route('PATCH', '/requests/(\\d+)/delivery', admin, async ({ request, params }) =
     }
     return { id:requestId,status };
   });
+});
+
+route('GET', '/volunteers', admin, () => rows(sql,`SELECT v.user_id,u.email,COALESCE(a.available,0) AS available,a.updated_at
+  FROM volunteers v JOIN users u ON u.id=v.user_id LEFT JOIN availability a ON a.user_id=v.user_id ORDER BY u.email`));
+route('GET', '/availability/me', ['volunteer'], async ({ user }) => {
+  const [result] = await rows(sql, 'SELECT * FROM availability WHERE user_id=?', [user.id]);
+  return result || { available: false };
+});
+route('PUT', '/availability/me', ['volunteer'], async ({ request, user }) => {
+  const { available } = await body(request, z.object({ available:z.boolean() }));
+  return transaction(async db => {
+    await rows(db, `INSERT INTO availability(user_id,available) VALUES (?,?) AS incoming
+      ON DUPLICATE KEY UPDATE available=incoming.available`, [user.id,available]);
+    await event(db,'volunteer_availability',{ userId:user.id, available });
+    return { available };
+  });
+});
+route('GET', '/notifications', admin, () => rows(sql,
+  'SELECT id,event_type AS type,payload,created_at AS createdAt FROM notifications ORDER BY id DESC LIMIT 80'));
+
+const reportSchema = z.object({
+  collection: z.enum(reportCollections),
+  disasterId:id, campId:id, requestId:id.optional(), reportType:name, title:name,
+  description:z.string().trim().min(1).max(4000), affectedPopulation:count.optional(),
+  details:z.record(z.string(),z.union([z.string().max(1000),z.number(),z.boolean(),z.null()])).optional()
+});
+route('POST', '/reports', all, async ({ request, user, response }) => {
+  const { collection, ...report } = await body(request, reportSchema);
+  await exists(sql,'SELECT id FROM camp_directory WHERE id=? AND disaster_id=?',[report.campId,report.disasterId],'Camp does not belong to this disaster');
+  if (report.requestId) {
+    await exists(sql,'SELECT id FROM requests WHERE id=? AND camp_id=?',[report.requestId,report.campId],'Request does not belong to this camp');
+  }
+  const result = await documents.collection(collection).insertOne({
+    ...report, submittedBy:user.id, timestamp:new Date(), processed:false
+  });
+  response.statusCode = 202;
+  return { id:result.insertedId.toHexString() };
+});
+route('GET', '/reports', all, async ({ search, user }) => {
+  const filter = {};
+  for (const key of ['disasterId','campId']) {
+    const value = numberFilter(search,key);
+    if (value !== null) filter[key] = value;
+  }
+  if (user.role === 'volunteer') filter.submittedBy = user.id;
+  if (search.get('reportType')) filter.reportType = name.parse(search.get('reportType'));
+  const query = search.get('q')?.trim();
+  if (query) filter.$text = { $search: query.slice(0,120) };
+  const selected = search.get('collection');
+  const collections = selected ? [z.enum(reportCollections).parse(selected)] : reportCollections;
+  const groups = await Promise.all(collections.map(async collection =>
+    (await documents.collection(collection).find(filter).sort({ timestamp:-1, _id:-1 }).limit(100).toArray())
+      .map(report => ({ ...report, collection }))));
+  return groups.flat().sort((a,b) => b.timestamp-a.timestamp).slice(0,100);
 });
 
 route('GET', '/analytics', admin, async ({ search }) => {

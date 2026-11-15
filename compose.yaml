@@ -15,7 +15,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          mysql -h 127.0.0.1 -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" "$$MYSQL_DATABASE" -e 'SELECT 1 FROM request_details LIMIT 1'
+          mysql -h 127.0.0.1 -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" "$$MYSQL_DATABASE" -e 'SELECT 1 FROM live_priority LIMIT 1'
       interval: 5s
       timeout: 5s
       retries: 30

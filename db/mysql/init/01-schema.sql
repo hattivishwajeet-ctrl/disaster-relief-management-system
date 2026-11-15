@@ -72,6 +72,16 @@ CREATE TABLE delivery_history (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   FOREIGN KEY (request_id) REFERENCES requests(id)
 );
+CREATE TABLE volunteers (
+  user_id INT PRIMARY KEY,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE TABLE availability (
+  user_id INT PRIMARY KEY,
+  available BOOLEAN NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  FOREIGN KEY (user_id) REFERENCES volunteers(user_id)
+);
 CREATE TABLE notifications (
   id INT AUTO_INCREMENT PRIMARY KEY,
   event_type VARCHAR(50) NOT NULL,
@@ -80,6 +90,17 @@ CREATE TABLE notifications (
   published_at DATETIME(3),
   INDEX outbox_pending (published_at,id)
 );
+CREATE TABLE processed_reports (
+  report_id CHAR(24) PRIMARY KEY,
+  processed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+CREATE TABLE camp_population_evidence (
+  camp_id INT PRIMARY KEY,
+  observed_at DATETIME(3) NOT NULL,
+  report_id CHAR(24) NOT NULL,
+  FOREIGN KEY (camp_id) REFERENCES locations(id)
+);
+
 CREATE VIEW camp_directory AS
 SELECT l.id,l.name,l.population,a.id AS area_id,a.name AS area,d.id AS disaster_id,d.name AS disaster
 FROM locations l JOIN affected_areas a ON a.id=l.area_id JOIN disasters d ON d.id=a.disaster_id
@@ -93,6 +114,9 @@ FROM resources r LEFT JOIN inventory i ON i.resource_id=r.id GROUP BY r.id,r.nam
 CREATE VIEW request_details AS
 SELECT q.*,c.name AS camp,c.disaster_id,c.disaster,r.name AS resource,r.unit
 FROM requests q JOIN camp_directory c ON c.id=q.camp_id JOIN resources r ON r.id=q.resource_id;
+CREATE VIEW live_priority AS
+SELECT request_details.*,ROW_NUMBER() OVER (ORDER BY critical DESC,priority DESC,created_at,id) AS queue_position
+FROM request_details WHERE status IN ('Requested','Approved');
 DELIMITER $$
 CREATE TRIGGER request_insert_guard BEFORE INSERT ON requests FOR EACH ROW
 BEGIN

@@ -4,7 +4,20 @@
 
 A disaster can change demand faster than administrators can manually re-rank relief requests. The system combines a prioritized request queue, location-specific stock, shipment tracking, and field reporting. Its objectives are to keep allocation atomic, enforce lifecycle transitions in MySQL, and surface committed changes to administrators.
 
-Each request represents one resource and one destination camp. One source fulfills the full quantity. The source is debited on allocation, and the destination is credited once upon confirmation. Inventory views show on-hand stock. Allocated shipments are visible in the delivery tracker. The workspace supports administrators.
+Each request represents one resource and one destination camp. One source fulfills the full quantity. The source is debited on allocation, and the destination is credited once upon confirmation. Inventory views show on-hand stock. Allocated shipments are visible in the delivery tracker. The app covers administrators and volunteers.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  UI[Next.js role-based workspace] -->|HTTPS JSON and session cookie| API[Node REST API]
+  API -->|Parameterized SQL and procedures| SQL[(MySQL)]
+  API -->|Field documents| M[(MongoDB replica set)]
+  M -->|Insert change streams| W[Report processor]
+  W -->|Idempotent transaction and priority recalculation| SQL
+  SQL -->|Committed notification outbox| H[WebSocket hub]
+  H -->|Live events| UI
+```
 
 ## ER diagram
 
@@ -21,8 +34,12 @@ erDiagram
   LOCATIONS ||--o{ ALLOCATIONS : source
   USERS ||--o{ ALLOCATIONS : allocates
   REQUESTS ||--|{ DELIVERY_HISTORY : tracks
+  USERS ||--o| VOLUNTEERS : extends
+  VOLUNTEERS ||--o| AVAILABILITY : declares
+  LOCATIONS ||--o| CAMP_POPULATION_EVIDENCE : tracks
 ```
 
+`notifications` and `processed_reports` are standalone. Notifications use event-specific JSON. Report receipts use the MongoDB ObjectId string as their primary key.
 
 ## Relational schema and data dictionary
 
@@ -37,7 +54,11 @@ erDiagram
 | requests | id | camp_id, resource_id, created_by; positive quantity, urgency 1–5, priority 0–100, lifecycle state, critical flag and creation time |
 | allocations | id | Unique request_id, source_id, allocated_by, allocation time |
 | delivery_history | id | request_id, state and transition time |
+| volunteers | user_id | user_id references users |
+| availability | user_id | user_id references volunteers; available flag and last update |
 | notifications | id | event_type, JSON payload, creation and publication timestamps |
+| processed_reports | report_id | Unique cross-store processing receipt, processing timestamp |
+| camp_population_evidence | camp_id | Camp reference, latest report timestamp and ID |
 
 ### Normalization
 
@@ -45,7 +66,7 @@ Operational relationships use atomic values and separate entities. In inventory,
 
 ## Priority and allocation
 
-`recalculate_priority(request_id, camp_id, resource_id, disaster_id)` applies every supplied filter. NULL omits a filter. It updates active requests in the caller’s transaction and emits a `priority_updated` notification via trigger for each changed score. It returns no result set. Read `request_details` for the resulting scores. The score is capped at 100.
+`recalculate_priority(request_id, camp_id, resource_id, disaster_id)` applies every supplied filter. NULL omits a filter. It updates active requests in the caller’s transaction and emits a `priority_updated` notification via trigger for each changed score. It returns no result set. Read `live_priority` or `request_details` for the resulting scores. The score is capped at 100.
 
 | Factor | Points |
 | --- | --- |
@@ -61,5 +82,8 @@ The demo starts with severity 5, population 80, urgency 5, 100 L on hand, and de
 ## Views, indexes, and analytical queries
 
 - `stock_by_location` joins stock, location, and resource; `stock_totals` aggregates on-hand quantities.
+- `live_priority` ranks active requests by critical flag, score, age, and ID. The queue index supports status and priority access.
 - Distribution uses joins and grouping by disaster and resource. Shortage analytics use `GROUP BY` and `HAVING`. Unattended analytics use a correlated `NOT EXISTS` subquery and ordered results.
 - The outbox index supports lookup of pending committed notifications. MongoDB has separate indexes for the report filters and text search.
+
+The project combines transactional allocation, stored procedures, triggers, views, indexes, MongoDB aggregation, and change streams. A volunteer report can update the queue and notify administrators while preserving the allocation and delivery history in MySQL.
