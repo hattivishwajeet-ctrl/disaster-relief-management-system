@@ -63,4 +63,3 @@ The demo starts with severity 5, population 80, urgency 5, 100 L on hand, and de
 - `stock_by_location` joins stock, location, and resource; `stock_totals` aggregates on-hand quantities.
 - Distribution uses joins and grouping by disaster and resource. Shortage analytics use `GROUP BY` and `HAVING`. Unattended analytics use a correlated `NOT EXISTS` subquery and ordered results.
 - The outbox index supports lookup of pending committed notifications. MongoDB has separate indexes for the report filters and text search.
-
