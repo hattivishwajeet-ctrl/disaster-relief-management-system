@@ -1,0 +1,38 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    command: ["--event-scheduler=ON"]
+    ports: ["127.0.0.1:${MYSQL_PORT:-3307}:3306"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./db/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mysql -h 127.0.0.1 -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" "$$MYSQL_DATABASE" -e 'SELECT 1 FROM request_details LIMIT 1'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  mongo:
+    image: mongo:8.0
+    command: ["mongod", "--replSet", "relief", "--bind_ip_all"]
+    ports: ["127.0.0.1:27018:27017"]
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --eval 'try { if (!rs.status().ok) quit(1); } catch (_) { rs.initiate({_id:"relief",members:[{_id:0,host:"mongo:27017"}]}); } if (!db.hello().isWritablePrimary) quit(1);'
+      interval: 5s
+      timeout: 10s
+      retries: 30
+volumes:
+  mysql-data:
+  mongo-data:
