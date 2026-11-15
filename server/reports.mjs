@@ -1,5 +1,17 @@
 import { documents, reportCollections } from './db.mjs';
 
+export async function initializeReports() {
+  for (const name of reportCollections) {
+    const collection = documents.collection(name);
+    await collection.createIndexes([
+      { key: { disasterId: 1, timestamp: -1 } }, { key: { campId: 1, timestamp: -1 } },
+      { key: { timestamp: -1 } }, { key: { reportType: 1, timestamp: -1 } },
+      { key: { processed: 1, timestamp: 1, _id: 1 } },
+      { key: { title: 'text', description: 'text' } }
+    ]);
+  }
+}
+
 export function fieldSummaries(disasterId) {
   return documents.collection(reportCollections[0]).aggregate([
     { $unionWith: reportCollections[1] },

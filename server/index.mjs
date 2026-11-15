@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import next from 'next';
 import { api } from './api.mjs';
 import { mongo, rows, sql } from './db.mjs';
+import { initializeReports } from './reports.mjs';
 
 const port = Number(process.env.PORT || 3000);
 const hostname = process.env.HOST || '127.0.0.1';
@@ -11,6 +12,7 @@ const nextUpgradeServer = createServer();
 const app = next({ dev: !process.argv.includes('--production'), hostname, port, httpServer: nextUpgradeServer });
 await rows(sql, 'SELECT 1 FROM request_details LIMIT 1');
 await mongo.connect();
+await initializeReports();
 await app.prepare();
 const nextHandler = app.getRequestHandler();
 const server = createServer((request,response) => {
